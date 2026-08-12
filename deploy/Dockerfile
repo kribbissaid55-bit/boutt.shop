@@ -64,7 +64,9 @@ COPY --chown=nodejs:nodejs --from=builder /app/client/dist ./client/dist
 # nginx or another reverse proxy serves /app/client/dist as static; the API
 # runs here on 4000. See deploy/nginx/bot-said-22.conf.sample for a reference.
 
-USER nodejs
+# Keep root so the app can write to Docker named volumes (/app/data,
+# /app/storage) whose mount points are root-owned on first creation.
+# USER nodejs
 WORKDIR /app/server
 EXPOSE 4000
 ENV NODE_ENV=production
@@ -73,4 +75,4 @@ ENV NODE_ENV=production
 ENTRYPOINT ["/sbin/tini", "--"]
 
 # Push schema on boot (idempotent) then start.
-CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma && node dist/index.js"]
+CMD ["sh", "-c", "mkdir -p /app/data /app/storage && npx prisma db push --schema=./prisma/schema.prisma && node dist/index.js"]
