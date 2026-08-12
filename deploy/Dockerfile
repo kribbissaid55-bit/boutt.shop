@@ -49,13 +49,16 @@ COPY --chown=nodejs:nodejs server/package.json ./server/
 
 # Only install SERVER runtime deps in the final image (client is static files).
 RUN cd server && npm ci --omit=dev \
+ && npm i --no-save prisma@5.22.0 \
  && cd .. && npm cache clean --force
 
 # Copy the built artifacts + prisma schema/seed from the builder.
 COPY --chown=nodejs:nodejs --from=builder /app/server/dist ./server/dist
 COPY --chown=nodejs:nodejs --from=builder /app/server/prisma ./server/prisma
-COPY --chown=nodejs:nodejs --from=builder /app/server/node_modules/.prisma ./server/node_modules/.prisma
-COPY --chown=nodejs:nodejs --from=builder /app/server/node_modules/@prisma ./server/node_modules/@prisma
+# npm workspaces hoist dependencies to the ROOT node_modules — the generated
+# Prisma client lives there, not under server/node_modules.
+COPY --chown=nodejs:nodejs --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --chown=nodejs:nodejs --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --chown=nodejs:nodejs --from=builder /app/client/dist ./client/dist
 
 # nginx or another reverse proxy serves /app/client/dist as static; the API
@@ -70,4 +73,4 @@ ENV NODE_ENV=production
 ENTRYPOINT ["/sbin/tini", "--"]
 
 # Push schema on boot (idempotent) then start.
-CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss=false && node dist/index.js"]
+CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma && node dist/index.js"]

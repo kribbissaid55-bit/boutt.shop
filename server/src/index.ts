@@ -41,10 +41,30 @@ import { FollowUpEngine } from './services/FollowUpEngine.js';
 import { CampaignEngine } from './services/CampaignEngine.js';
 import { DataRetentionService } from './services/DataRetentionService.js';
 import { handleIncomingCall } from './engine/handleIncomingCall.js';
-import { initSqlitePragmas } from './lib/prisma.js';
+import { initSqlitePragmas, prisma } from './lib/prisma.js';
 import { StorageMonitorService } from './services/StorageMonitorService.js';
 import { installShutdown } from './shutdown.js';
 import fs from 'node:fs';
+import bcrypt from 'bcryptjs';
+
+/**
+ * First-boot bootstrap: if no admin user exists (fresh database, e.g. a new
+ * Docker volume), create one from ADMIN_USERNAME / ADMIN_PASSWORD env vars so
+ * the operator can log in without running the seed script manually.
+ */
+async function bootstrapAdmin() {
+  const count = await prisma.adminUser.count().catch(() => -1);
+  if (count !== 0) return;
+  const username = process.env.ADMIN_USERNAME;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!username || !password) {
+    logger.warn('no admin user exists and ADMIN_USERNAME/ADMIN_PASSWORD are not set — login is impossible');
+    return;
+  }
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.adminUser.create({ data: { username, passwordHash, role: 'owner', isActive: true } });
+  logger.info({ username }, '✓ bootstrap admin account created');
+}
 
 async function main() {
   fs.mkdirSync(env.SESSIONS_DIR, { recursive: true });
@@ -52,6 +72,9 @@ async function main() {
 
   // SQLite concurrency tuning — WAL + busy_timeout + synchronous=NORMAL.
   await initSqlitePragmas();
+
+  // Create the admin account on a fresh database (Docker first boot).
+  await bootstrapAdmin();
 
   WhatsAppSessionService.init(
     (m) => BotEngineService.handleIncoming(m),
