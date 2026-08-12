@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import path from 'node:path';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { prisma } from '../lib/prisma.js';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
@@ -113,6 +116,18 @@ export function buildApp() {
   app.use('/api/storage', storageRouter);
   app.use('/api/logs', logsRouter);
   app.use('/api/events', eventsRouter);
+
+  // Serve the built SPA (client/dist) when present — lets one domain serve
+  // both the API (/api/*) and the frontend in production (Docker/Dokploy).
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const clientDist = path.resolve(moduleDir, '../../../client/dist');
+  if (fs.existsSync(clientDist)) {
+    app.use(express.static(clientDist));
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      res.sendFile(path.join(clientDist, 'index.html'));
+    });
+  }
 
   app.use(notFound);
   app.use(errorHandler);

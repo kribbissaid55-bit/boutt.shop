@@ -6,5 +6,9 @@ storage/sessions
 storage/media
 server/prisma/dev.db
 server/prisma/dev.db-journal
+server/prisma/dev.db-wal
+server/prisma/dev.db-shm
+backups/
+.claude/
 *.log
 .DS_Store
