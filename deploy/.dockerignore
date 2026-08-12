@@ -1,0 +1,26 @@
+# Keep the build context small so `docker build` uploads seconds, not minutes.
+node_modules
+**/node_modules
+dist
+**/dist
+.git
+.gitignore
+.DS_Store
+*.log
+logs
+backups
+storage
+data
+*.tar.gz
+*.zip
+
+# Never leak secrets into the image.
+.env
+.env.*
+!.env.example
+!deploy/.env.production.example
+
+# Editor cruft.
+.vscode
+.idea
+*.swp

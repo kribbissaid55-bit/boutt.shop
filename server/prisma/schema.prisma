@@ -1,0 +1,669 @@
+// Switch provider to "postgresql" + change DATABASE_URL to migrate to Postgres.
+// All queries are written to be portable (no SQLite/Postgres-only features).
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  // role: 'owner' | 'admin' | 'operator'. Owner is the seed account and cannot
+  // be locked out. Admin can manage operators. Operator sees only Inbox-side
+  // pages (Sidebar filter is client-side; see plan notes for future hardening).
+  role         String    @default("owner")
+  // isActive = false → login rejected with 401. Toggle from Settings → team.
+  isActive     Boolean   @default(true)
+  // Optional email — used as display in the team table and future invite target.
+  email        String?
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  // Which owner/admin created this account. NULL for the seed owner.
+  createdById  String?
+}
+
+model WhatsAppAccount {
+  id              String   @id @default(cuid())
+  name            String
+  phoneNumber     String?
+  status          String   @default("disconnected") // disconnected|connecting|qr_required|connected|error
+  lastError       String?
+  sessionPath     String   @unique
+  ignoreGroups    Boolean  @default(true)
+  dailySendCap    Int      @default(800)
+  // Anti-ban hardening
+  browserIdentity String?  // JSON tuple ["name","platform","version"], persisted on first connect
+  proxyUrl        String?  // http(s)://user:pass@host:port (null = direct)
+  lastSendAt      DateTime?
+  cooldownUntil   DateTime?
+  dailySent       Int      @default(0)
+  // Platform detection (from Baileys sock.authState.creds.platform on connect).
+  // Values seen: 'iphone' | 'android' | 'smbi' (Business iOS) | 'smba' (Business Android) | 'web' | null.
+  // `isBusiness` is the derived flag — chat labels display ONLY when this is true.
+  platform        String?
+  isBusiness      Boolean?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bots     BotAccount[]
+  contacts Contact[]
+  messages Message[]
+  campaigns RetargetingCampaign[]
+  chatLabels WhatsAppChatLabel[]
+}
+
+model Bot {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  status          String   @default("draft")  // draft | active | paused
+  defaultLanguage String   @default("ar")
+  isActive        Boolean  @default(true)
+  priority        Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accounts BotAccount[]
+  steps    BotStep[]
+  settings BotSettings?
+  aiConfig BotAiConfig?
+  orders   Order[]
+  products BotProduct[]
+}
+
+// BotAiConfig — per-bot LLM-driven response configuration. When enabled,
+// the AI engine takes over from the rule-based bot flow for that bot's
+// incoming messages. All fields default to safe values so a freshly created
+// row works out of the box.
+model BotAiConfig {
+  botId                    String  @id
+  enabled                  Boolean @default(false)
+  // Provider + model selection. Provider identifies which adapter to use
+  // (openai | deepseek | gemini | anthropic). Model is provider-specific.
+  provider                 String  @default("openai")
+  model                    String  @default("gpt-4o")
+  // Optional LLM override for VOICE-mode replies. When unset, voice replies use
+  // the default `provider`/`model`. Useful pattern: cheap fast LLM (DeepSeek)
+  // for text replies, higher-quality LLM (Gemini/OpenAI/Anthropic) for voice
+  // where prose smoothness matters for TTS output.
+  voiceChatProvider        String?
+  voiceChatModel           String?
+  systemPrompt             String  @default("أنت بائع محترف يساعد العملاء بأسلوب ودي بالدارجة المغربية. كن مختصرا، طرح أسئلة قصيرة، أجمع المعلومات تدريجيا.")
+  // Reply mode: text only, voice only, or auto (AI decides per turn)
+  replyMode                String  @default("text")          // text | voice | auto
+  voiceProvider            String  @default("elevenlabs")
+  // Default to an Arabic-leaning ElevenLabs voice — far better Darija delivery
+  // than the OpenAI presets when paired with `voiceModelId='eleven_multilingual_v2'`.
+  voiceId                  String  @default("IES4nrmZdUBHByLBde0P")
+  // Speech-to-text on incoming voice notes
+  transcribeAudio          Boolean @default(true)
+  // Order collection toggles
+  collectionEnabled        Boolean @default(false)
+  collectName              Boolean @default(true)
+  collectPhone             Boolean @default(true)
+  collectCity              Boolean @default(true)
+  collectAddress           Boolean @default(true)
+  collectQuantity          Boolean @default(true)
+  // Owner notification — phone (E.164) to forward order summaries to
+  notifyOwnerEnabled       Boolean @default(false)
+  ownerPhone               String?
+  // Behaviour guards
+  stopWord                 String?            // when customer types this, mark contact botPaused=true forever
+  ownerInterventionMinutes Int     @default(60)  // pause AI for N minutes after admin manually replies
+  maxRepliesPerSession     Int     @default(20)
+  customerReplyTimeoutMin  Int     @default(0)    // 0 = never timeout
+  // Continue replying after order summary sent?
+  continueAfterOrder       Boolean @default(false)
+  // Operator-customizable closing message sent automatically to the customer
+  // immediately AFTER `order_done=true`. When null, the engine uses
+  // DEFAULT_POST_ORDER_THANKS. Independent of `notifyOwnerEnabled`.
+  postOrderThanksMessage   String?
+  // AI reply timing — pre-send delay to make replies feel human. All values
+  // in SECONDS, clamped [0, 600] at runtime. When randomize is true, delay
+  // is randInt(min, max) picked fresh per reply; when false, `delaySeconds`
+  // is used verbatim (max is ignored). Applied ONLY in AI-driven modes
+  // (ai_only, hybrid, rule_priority). Default 0 → no delay, matches
+  // pre-feature behaviour so existing bots don't change.
+  firstReplyDelaySeconds     Int     @default(0)
+  firstReplyDelayMaxSeconds  Int     @default(0)
+  firstReplyRandomize        Boolean @default(false)
+  replyDelaySeconds          Int     @default(0)
+  replyDelayMaxSeconds       Int     @default(0)
+  replyRandomize             Boolean @default(false)
+  // Pre-attached intro media to send on first contact (JSON: string[] of MediaFile ids)
+  introMediaIds            String?
+  // Optional library of "smart-recall" media the AI can mention by tag.
+  // JSON: { [tag: string]: string[] } — e.g. {"price-list":["abc","def"]}
+  recallMediaTags          String?
+  // Brain attachments: media the operator pinned to the AI's instructions,
+  // each with a short label they reference inline in `systemPrompt`. The LLM
+  // emits the label in `send_media_ids` and the engine resolves label → id.
+  // JSON: [{ id: string, label: string, note?: string }, ...]
+  instructionMedia         String?
+  // Customer status tags. JSON object:
+  //   { enabled, sentNoReply:{enabled,label,color}, replied:{...}, ordered:{...} }
+  // `color` is a Baileys label-palette index (0..19). Drives both the admin
+  // chip and the WA chat-label sync via CustomerTagService.
+  customerTagsConfig       String?
+  // Per-turn safety: ask before sending a message after order summary (UX-only).
+  requirePreSendConfirm    Boolean @default(false)
+  // When true, on a customer's FIRST message we run the rule-based welcome
+  // step once (operator-curated text/audio/video), then the AI handles
+  // every subsequent turn. False = AI handles message #1 directly.
+  welcomeBeforeAi          Boolean @default(false)
+  // Engine mode — the operator's master switch for what replies to the
+  // customer. Subsumes the older enabled+welcomeBeforeAi flags:
+  //   disabled       → no engine runs, the bot is silent for this account
+  //   rule_only      → the legacy step-based bot walks the customer
+  //   ai_only        → the LLM handles every turn
+  //   hybrid         → welcome step runs once on first contact, AI takes over
+  //   rule_priority  → rule-bot tries to match every turn (option/exact/keyword);
+  //                    AI runs ONLY when no rule step matches
+  engineMode               String  @default("hybrid")
+  // How many of the most recent messages the AI sees in chat context. Lower
+  // = cheaper + faster; higher = better long-conversation memory.
+  historyTurns             Int     @default(12)
+  // Voice quality (standard = gpt-4o-mini-tts, hd = tts-1-hd). Standard
+  // supports `instructions` for Darija accent; HD has higher fidelity.
+  voiceQuality             String  @default("standard")
+  // Operator-supplied TTS direction (style/pace/tone). Appended after the
+  // hardcoded Darija baseline. Use only with the "standard" quality model.
+  voiceInstructions        String?
+  // Operator-supplied STT vocabulary anchor. Appended after the hardcoded
+  // Darija baseline to bias Whisper/gpt-4o-mini-transcribe toward the shop's
+  // own vocabulary (product names, city names, etc.).
+  sttContextPrompt         String?
+  // LLM creativity (0.0 = strictly deterministic, 1.0 = max variety). 0.4 is
+  // tight enough for accurate order-collection without sounding robotic.
+  chatTemperature          Float   @default(0.4)
+  // ElevenLabs voice settings (only used when voiceProvider === 'elevenlabs')
+  voiceStability           Float   @default(0.5)
+  voiceSimilarityBoost     Float   @default(0.75)
+  // ElevenLabs model selector — turbo_v2_5 is fastest, multilingual_v2 is the
+  // highest-quality choice for Arabic/Darija pronunciation. eleven_v3 is alpha.
+  voiceModelId             String  @default("eleven_multilingual_v2")
+  // ElevenLabs `style` (0..1) — emotional intensity. Surfaced for fine tuning.
+  voiceStyle               Float   @default(0.35)
+  // Transcript excerpt from the sample the operator used to clone their voice
+  // (ElevenLabs IVC). Injected into the layered system prompt so the LLM
+  // matches the operator's dialect + speaking style. Cleared when the operator
+  // removes the clone. NULL for bots that never cloned — prompt block is
+  // omitted entirely in that case.
+  voiceClonedPersona       String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+}
+
+// AiCredential — encrypted API key vault for AI providers. Keys are
+// encrypted with AES-256-GCM using AI_KEY_SECRET from env. The plaintext
+// key is never returned by API endpoints — only the label + masked tail.
+model AiCredential {
+  id           String   @id @default(cuid())
+  provider     String   // openai | deepseek | gemini | anthropic | elevenlabs
+  label        String
+  encryptedKey String   // base64( iv || authTag || ciphertext )
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([provider])
+}
+
+model BotAccount {
+  botId     String
+  accountId String
+  bot       Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  account   WhatsAppAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@id([botId, accountId])
+}
+
+model BotSettings {
+  botId                  String   @id
+  welcomeEnabled         Boolean  @default(true)
+  fallbackEnabled        Boolean  @default(true)
+  groupsEnabled          Boolean  @default(false)
+  workingHours           String?  // JSON: { enabled, start, end, tz }
+  defaultFallbackMessage String?
+  humanHandoverKeywords  String?  // JSON: string[]
+  inactivityResetHours   Int      @default(24)
+  sendWelcomeOnce        Boolean  @default(false)
+  pauseAfterWelcome      Boolean  @default(false)
+  notifyOnHandover       Boolean  @default(true)
+  maxFailedAttempts      Int      @default(3)
+  // Per-bot incoming call handling. When enabled, overrides the global Setting.
+  callRejectionEnabled       Boolean  @default(false)
+  callRejectionDelaySeconds  Int      @default(0)   // 0..10 — let the call ring briefly before auto-reject
+  callRejectionSequence      String?               // JSON: { blocks: MessageBlockJson[] }
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+}
+
+model BotStep {
+  id           String   @id @default(cuid())
+  botId        String
+  title        String
+  description  String?
+  type         String   // welcome | keyword | exact_match | option_reply | fallback | handover | order | normal | end
+  triggerType  String   // welcome | keyword | exact_match | option_number | fallback | handover | none
+  triggerValue String?  // keywords (comma-sep) or exact phrase
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  settings     String?  // JSON, step-level: { repeatOptionsOnFail, etc. }
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  bot     Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  blocks  MessageBlock[]
+  options BotOption[]    @relation("StepOptions")
+  asTarget BotOption[]   @relation("OptionTarget")
+
+  @@index([botId, sortOrder])
+}
+
+model MessageBlock {
+  id            String   @id @default(cuid())
+  stepId        String
+  type          String   // text | audio | image | video | document | delay | options | action
+  content       String?
+  mediaId       String?
+  caption       String?
+  delaySeconds  Int?
+  actionType    String?  // set_status | add_tag | pause_bot | resume_bot | mark_needs_human | end_conversation | notify_admin | start_order_collection | confirm_order
+  actionPayload String?  // JSON
+  enabled       Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  metadata      String?  // JSON: { sendAsVoiceNote, simulateRecording, sendBefore, etc. }
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  step  BotStep    @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  media MediaFile? @relation(fields: [mediaId], references: [id], onDelete: SetNull)
+
+  @@index([stepId, sortOrder])
+}
+
+model BotOption {
+  id           String   @id @default(cuid())
+  stepId       String
+  label        String
+  number       String   // "1", "2", "أ", etc.
+  keywords     String?  // JSON: string[]
+  targetStepId String?
+  description  String?
+  enabled      Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  displayMode  String   @default("numbered") // numbered | buttons | list | auto
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  step       BotStep  @relation("StepOptions", fields: [stepId], references: [id], onDelete: Cascade)
+  targetStep BotStep? @relation("OptionTarget", fields: [targetStepId], references: [id], onDelete: SetNull)
+
+  @@index([stepId, sortOrder])
+}
+
+model MediaFile {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // audio | image | video | document
+  mimeType  String
+  sizeBytes Int
+  path      String
+  createdAt DateTime @default(now())
+
+  blocks MessageBlock[]
+}
+
+model Contact {
+  id             String   @id @default(cuid())
+  accountId      String
+  jid            String
+  // Phone-bearing JID (e.g. "212XXXXXXXXX@s.whatsapp.net"), resolved from
+  // Baileys' WAMessageKey.senderPn when `jid` is a `@lid` (privacy jid).
+  // Populated lazily on incoming; null until the first message carrying the
+  // sender's phone identifier. Never fabricated from LID digits.
+  phoneJid       String?
+  name           String?
+  status         String   @default("new") // new|interested|ordered|rejected|needs_human|cold|hot
+  botPaused      Boolean  @default(false)
+  notes          String?
+  currentStepId  String?
+  failedAttempts Int      @default(0)
+  metadata       String?
+  lastSeenAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  // CRM extensions
+  city                  String?
+  address               String?
+  source                String?  // "manual" | "import" | "campaign:<id>" | "organic"
+  campaignName          String?
+  tags                  String?  // JSON: string[]
+  doNotContact          Boolean  @default(false)
+  firstMessageAt        DateTime?
+  lastIncomingMessageAt DateTime?
+  lastOutgoingMessageAt DateTime?
+  lastInteractionAt     DateTime?
+  importBatchId         String?
+  // AI engine — running order draft (JSON: { name?, phone?, city?, address?, quantity?, notes?, finalized? })
+  aiOrderDraft          String?
+  // Call-rejection dedup. Set when we send the configured call-rejection
+  // sequence on an incoming call. Subsequent calls within 24h reject silently
+  // (no resent message). Nullable for backward compat.
+  lastCallRejectionMessageAt DateTime?
+
+  account  WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messages Message[]
+  orders   Order[]
+  notesList     CustomerNote[]
+  followUpLogs  FollowUpLog[]
+  campaignLogs  RetargetingCampaignLog[]
+
+  @@unique([accountId, jid])
+  @@index([lastInteractionAt])
+  @@index([status])
+  @@index([doNotContact])
+  @@index([city])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  accountId       String
+  contactId       String
+  direction       String   // in | out
+  type            String   // text | audio | image | video | document
+  body            String?
+  mediaId         String?
+  waMessageId     String?  @unique
+  clientMessageId String?  @unique
+  status          String   @default("pending") // pending|sent|delivered|read|failed
+  error           String?
+  createdAt       DateTime @default(now())
+
+  // CRM tracing
+  senderType    String?  // "customer" | "bot" | "admin" | "campaign" | "follow_up"
+  stepId        String?
+  campaignLogId String?  @unique
+  followUpLogId String?  @unique
+
+  account WhatsAppAccount @relation(fields: [accountId], references: [id])
+  contact Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([senderType])
+}
+
+model Order {
+  id        String   @id @default(cuid())
+  contactId String
+  botId     String
+  fullName  String?
+  phone     String?
+  city      String?
+  address   String?
+  quantity  String?
+  notes     String?
+  status    String   @default("pending") // pending | confirmed | cancelled
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  bot     Bot     @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId, createdAt])
+}
+
+model ProcessedMessage {
+  waMessageId String   @id
+  accountId   String
+  processedAt DateTime @default(now())
+}
+
+// Poll metadata used to decrypt incoming poll-vote payloads. We need the
+// 32-byte encKey we generated when sending, plus the creator JID + the original
+// option list, to map a vote (which arrives as a hash) back to one of our
+// options. Auto-pruned (TTL 30 days) — polls older than that are unlikely to
+// still get votes.
+model PollMapping {
+  pollMsgId    String   @id
+  accountId    String
+  creatorJid   String
+  encKey       Bytes
+  optionsJson  String   // JSON: [{number, label}]
+  createdAt    DateTime @default(now())
+
+  @@index([accountId])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model LogEntry {
+  id        String   @id @default(cuid())
+  level     String
+  scope     String
+  accountId String?
+  message   String
+  meta      String?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM extensions: Inbox / Customers / Import-Export / Segments / Campaigns / Follow-ups
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SavedReply {
+  id        String   @id @default(cuid())
+  title     String
+  category  String?
+  text      String?
+  mediaIds  String?  // JSON: string[]
+  shortcut  String?  @unique
+  isActive  Boolean  @default(true)
+  tags      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CustomerNote {
+  id        String   @id @default(cuid())
+  contactId String
+  body      String
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  @@index([contactId, createdAt])
+}
+
+model CustomerImportBatch {
+  id           String   @id @default(cuid())
+  fileName     String
+  source       String   // "excel" | "csv" | "google_sheets"
+  totalRows    Int      @default(0)
+  importedRows Int      @default(0)
+  updatedRows  Int      @default(0)
+  skippedRows  Int      @default(0)
+  failedRows   Int      @default(0)
+  mapping      String?
+  errors       String?
+  createdAt    DateTime @default(now())
+}
+
+model CustomerSegment {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  filters     String   // JSON DSL
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  campaigns RetargetingCampaign[]
+}
+
+model RetargetingCampaign {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  segmentId       String
+  accountId       String
+  status          String   @default("draft") // draft | scheduled | running | paused | completed | canceled
+  messageSequence String   // JSON
+  scheduleAt      DateTime?
+  sendingSpeed    String?  // JSON: { perMinute, perHour, jitterMs }
+  stopConditions  String?  // JSON
+  stats           String?  // JSON snapshot
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  segment CustomerSegment        @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  account WhatsAppAccount        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  logs    RetargetingCampaignLog[]
+  @@index([status])
+}
+
+model RetargetingCampaignLog {
+  id          String   @id @default(cuid())
+  campaignId  String
+  contactId   String
+  accountId   String
+  status      String   @default("pending") // pending | sent | skipped | failed | replied | ordered
+  reason      String?
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  campaign RetargetingCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+  @@index([status, scheduledAt])
+}
+
+model FollowUpRule {
+  id           String    @id @default(cuid())
+  name         String
+  isActive     Boolean   @default(true)
+  triggerType  String    // "no_reply" | "after_welcome" | "after_option" | "after_status" | …
+  // Single WhatsApp account this rule sends from. Engine prefers this over scope.accountIds.
+  accountId    String?
+  // Optional bot scope — when set, the AI page filters and edits rules for this bot.
+  botId        String?
+  // Set every time the rule is activated. Engine ignores any contact whose
+  // lastOutgoingMessageAt is older than this — newly-activated rules never
+  // fire on historical conversations.
+  activatedAt  DateTime?
+  scope        String?   // JSON: { accountIds?, botIds?, segmentId?, statuses? } — legacy/multi-account
+  conditions   String?   // JSON
+  workingHours String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  steps FollowUpStep[]
+  logs  FollowUpLog[]
+}
+
+model FollowUpStep {
+  id              String   @id @default(cuid())
+  ruleId          String
+  stepOrder       Int
+  delayValue      Int
+  delayUnit       String   // "minutes" | "hours" | "days"
+  messageSequence String   // JSON
+  conditions      String?
+  stopConditions  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  rule FollowUpRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  @@index([ruleId, stepOrder])
+}
+
+model FollowUpLog {
+  id          String   @id @default(cuid())
+  ruleId      String
+  stepId      String
+  contactId   String
+  accountId   String
+  scheduledAt DateTime
+  sentAt      DateTime?
+  status      String   @default("pending") // pending | sent | skipped | failed | canceled
+  reason      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rule    FollowUpRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, ruleId, stepId])
+  @@index([status, scheduledAt])
+}
+
+model ExportJob {
+  id            String   @id @default(cuid())
+  type          String   // "excel" | "csv" | "google_sheets"
+  filters       String
+  columns       String
+  status        String   @default("pending")
+  fileUrl       String?
+  googleSheetId String?
+  stats         String?
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Product — owner's catalog. Each product carries free-form name/price/desc
+// plus references to MediaFile rows (no duplication of storage). The AI engine
+// reads the bot's linked products and injects them into the system prompt
+// verbatim so prices and descriptions are never improvised by the model.
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  price        String?   // free-text so "199 د.م" / "starting at 150" both work
+  currency     String?
+  sku          String?
+  tags         String?   // JSON: string[]
+  mediaIds     String?   // JSON: string[] — MediaFile ids
+  isActive     Boolean  @default(true)
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  botLinks     BotProduct[]
+}
+
+// Many-to-many: a Product can belong to several bots; a bot can sell many.
+model BotProduct {
+  botId     String
+  productId String
+  bot       Bot     @relation(fields: [botId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@id([botId, productId])
+}
+
+// Cache of WhatsApp chat labels we created on a given account. One row per
+// (account, statusKey) — the labelId Baileys returns is stored here so the
+// CustomerTagService doesn't re-create labels on every reconciliation tick.
+model WhatsAppChatLabel {
+  id        String   @id @default(cuid())
+  accountId String
+  statusKey String   // 'sent_no_reply' | 'replied' | 'ordered'
+  waLabelId String
+  name      String
+  color     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@unique([accountId, statusKey])
+}

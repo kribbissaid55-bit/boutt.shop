@@ -1,0 +1,43 @@
+# Bot Said 22 — production docker-compose.
+#
+# Usage (from project root):
+#   cp deploy/.env.production.example .env         # fill JWT_SECRET etc.
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#   docker compose -f deploy/docker-compose.yml logs -f
+#
+# Persistent state on the host:
+#   ./storage         → uploaded media + Baileys session files
+#   ./data            → SQLite DB (dev.db) — INSIDE the container it's at
+#                       /app/server/prisma/dev.db; mounted below.
+
+services:
+  bot-said-22:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: bot-said-22:latest
+    container_name: bot-said-22
+    restart: unless-stopped
+
+    # The API listens on 4000 inside the container. Expose to the host so
+    # nginx (or Caddy / Traefik) can reverse-proxy from :80/:443.
+    # If you serve nginx INSIDE another container, drop the ports mapping
+    # and share a docker network instead.
+    ports:
+      - "127.0.0.1:4000:4000"
+
+    # Load every value from the project's .env (JWT_SECRET, ALLOWED_ORIGINS,
+    # ADMIN_USERNAME/PASSWORD, ...). Keep .env out of git.
+    env_file:
+      - ../.env
+
+    volumes:
+      # Media library + Baileys session state. LOSING THIS = re-scan every
+      # WhatsApp QR + lose uploaded files.
+      - ../storage:/app/storage
+      # SQLite database. Mounted as a directory so prisma can write dev.db-wal
+      # + dev.db-shm alongside dev.db.
+      - ../data:/app/server/prisma
+      # Client SPA — nginx on the host serves this as static. If your nginx
+      # runs OUTSIDE Docker, expose the dist through a bind mount:
+      - ../client-dist:/app/client/dist:ro

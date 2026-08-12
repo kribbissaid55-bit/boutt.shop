@@ -1,0 +1,45 @@
+# systemd unit for Bot Said 22.
+#
+# Install:
+#   sudo cp deploy/systemd/bot-said-22.service /etc/systemd/system/
+#   sudo sed -i "s|/opt/bot-said-22|/actual/path/to/bot-said-22|g" \
+#     /etc/systemd/system/bot-said-22.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bot-said-22
+#
+# View logs:
+#   journalctl -fu bot-said-22
+
+[Unit]
+Description=Bot Said 22 (WhatsApp automation server)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/bot-said-22/server
+EnvironmentFile=/opt/bot-said-22/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+# Baileys keeps in-memory session state per WhatsApp account; NEVER cluster.
+# Memory ceiling — if the process leaks past this, systemd restarts it.
+MemoryHigh=450M
+MemoryMax=512M
+
+# Hardening — only allow writes to storage/ and prisma/ (SQLite live DB).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/bot-said-22/storage /opt/bot-said-22/server/prisma
+
+# Logs go to journald by default.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bot-said-22
+
+[Install]
+WantedBy=multi-user.target

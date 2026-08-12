@@ -1,0 +1,20 @@
+{
+  "name": "bot-said-22",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Private WhatsApp automation system (Baileys-based, no AI, manual flows)",
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:client",
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "build": "npm --workspace server run build && npm --workspace client run build",
+    "start": "npm --workspace server run start",
+    "db:push": "npm --workspace server run db:push",
+    "db:seed": "npm --workspace server run db:seed",
+    "setup": "npm install && npm run db:push && npm run db:seed"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5"
+  }
+}

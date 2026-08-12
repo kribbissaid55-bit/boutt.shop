@@ -1,0 +1,86 @@
+# nginx site config for Bot Said 22.
+#
+# Install:
+#   sudo cp deploy/nginx/bot-said-22.conf.sample /etc/nginx/sites-available/bot-said-22.conf
+#   # Edit the file: set server_name + root
+#   sudo ln -s /etc/nginx/sites-available/bot-said-22.conf /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Add HTTPS after the site works:
+#   sudo apt-get install -y certbot python3-certbot-nginx
+#   sudo certbot --nginx -d your.domain.com
+#
+# certbot rewrites the server block below to add TLS + redirect; leave that
+# to it — don't hand-write cert paths.
+
+server {
+    listen 80;
+    listen [::]:80;
+
+    # CHANGE THIS to your real domain (comma-separate for multiple).
+    server_name your.domain.com;
+
+    # CHANGE THIS to the actual absolute path of client/dist inside the
+    # extracted bundle (e.g. /opt/bot-said-22/client/dist).
+    root /opt/bot-said-22/client/dist;
+    index index.html;
+
+    # Reasonable upload limit for the media library. Bump if the operator
+    # uploads long voice notes or large videos.
+    client_max_body_size 25M;
+
+    # Gzip static assets for faster page loads. Vite already gzips at build
+    # time (index.html + JS + CSS); nginx compresses on the fly for the rest.
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/json application/javascript
+               application/xml+rss application/atom+xml image/svg+xml
+               text/javascript;
+
+    # ─────────────────────────────────────────────────────────────────────
+    # API — reverse-proxy /api/* to the Node backend on 4000.
+    # ─────────────────────────────────────────────────────────────────────
+    location /api/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+
+        # WebSocket / SSE upgrade path — the dashboard uses Server-Sent Events
+        # for live message ticks. Long timeout so the stream doesn't idle-close.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+
+        # Preserve the original client IP so express `trust proxy` + rate limit
+        # see the real address, not 127.0.0.1.
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Session cookie must reach the browser intact — don't touch it.
+        proxy_pass_request_headers on;
+    }
+
+    # ─────────────────────────────────────────────────────────────────────
+    # SPA — everything else falls back to index.html so react-router works.
+    # ─────────────────────────────────────────────────────────────────────
+    location / {
+        try_files $uri $uri/ /index.html;
+
+        # Static assets are content-hashed by Vite → cache aggressively.
+        # index.html is NOT hashed → no-cache so operators always see new
+        # deploys immediately.
+        location = /index.html {
+            add_header Cache-Control "no-store, no-cache, must-revalidate";
+        }
+        location /assets/ {
+            add_header Cache-Control "public, max-age=31536000, immutable";
+        }
+    }
+
+    # Hide server tokens (nginx version) from response headers.
+    server_tokens off;
+}
