@@ -25,6 +25,35 @@ const queues = new Map<string, QueueState>();
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * Anti-ban WARM-UP schedule. A brand-new WhatsApp number that suddenly blasts
+ * hundreds of automated messages is the #1 trigger for WhatsApp's spam
+ * detection → account ban. Real humans (and safe automation) ramp up slowly.
+ *
+ * This caps the *effective* daily sends by the account's age, and only ever
+ * LOWERS the operator's configured cap — never raises it. After ~30 days the
+ * number is "warm" and the operator's own cap fully applies.
+ *
+ * Returns the max automated sends allowed today for an account this old.
+ */
+export function warmupCapForAgeDays(ageDays: number): number {
+  if (ageDays < 2) return 20;    // days 0-1
+  if (ageDays < 4) return 40;    // days 2-3
+  if (ageDays < 7) return 80;    // days 4-6
+  if (ageDays < 14) return 160;  // week 2
+  if (ageDays < 21) return 320;  // week 3
+  if (ageDays < 30) return 600;  // week 4
+  return Number.MAX_SAFE_INTEGER; // warm — operator's own cap governs
+}
+
+/** Extra send spacing (ms) for fresh accounts — slower = more human. */
+function warmupExtraDelayMs(ageDays: number): number {
+  if (ageDays < 2) return 4000;
+  if (ageDays < 7) return 2000;
+  if (ageDays < 14) return 800;
+  return 0;
+}
+
 function getState(accountId: string): QueueState {
   let s = queues.get(accountId);
   const day = todayKey();
@@ -66,7 +95,7 @@ export const MessageQueueService = {
       // 1. Account-level cooldown gate
       const acc = await prisma.whatsAppAccount.findUnique({
         where: { id: accountId },
-        select: { cooldownUntil: true, dailySent: true, lastSendAt: true },
+        select: { cooldownUntil: true, dailySent: true, lastSendAt: true, createdAt: true },
       });
       if (acc?.cooldownUntil) {
         if (acc.cooldownUntil.getTime() > Date.now()) {
@@ -95,12 +124,23 @@ export const MessageQueueService = {
           data: { dailySent: 0 },
         }).catch(() => {});
       }
-      const cap = (typeof opts.dailyCap === 'number' && opts.dailyCap > 0)
+      const configuredCap = (typeof opts.dailyCap === 'number' && opts.dailyCap > 0)
         ? opts.dailyCap
         : 100;
+      // Warm-up: an account younger than ~30 days is capped by its age, no
+      // matter how high the operator set the cap. This is the strongest
+      // code-level protection against fresh-number bans.
+      const ageDays = acc?.createdAt
+        ? Math.floor((Date.now() - acc.createdAt.getTime()) / 86_400_000)
+        : 999;
+      const warmCap = warmupCapForAgeDays(ageDays);
+      const cap = Math.min(configuredCap, warmCap);
       const todaySent = Math.max(s.sentToday, dbSentToday);
       if (todaySent >= cap) {
-        logger.warn({ accountId, dailyCap: cap }, 'daily send cap reached');
+        logger.warn(
+          { accountId, dailyCap: cap, configuredCap, warmCap, ageDays },
+          warmCap < configuredCap ? 'warm-up daily cap reached (account still young)' : 'daily send cap reached',
+        );
         throw new Error('daily_send_cap_reached');
       }
 
@@ -115,9 +155,13 @@ export const MessageQueueService = {
         logger.info({ accountId, recent: s.recentSends.length, extraDelay }, 'burst-cooldown active');
       }
 
-      // 4. Base random human-like delay (skipped for admin manual sends)
+      // 4. Base random human-like delay (skipped for admin manual sends).
+      //    Fresh accounts get extra spacing on top — slower pacing during
+      //    warm-up looks more human and further lowers ban risk.
+      const warmDelay = opts.bypassDelay ? 0 : warmupExtraDelayMs(ageDays);
       const baseDelay = opts.bypassDelay ? 0 : randInt(opts.minDelayMs, opts.maxDelayMs);
-      if (baseDelay + extraDelay > 0) await sleep(baseDelay + extraDelay);
+      const totalDelay = baseDelay + extraDelay + warmDelay;
+      if (totalDelay > 0) await sleep(totalDelay);
 
       // 5. Run the actual send
       try {

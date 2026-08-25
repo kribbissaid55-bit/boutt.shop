@@ -550,6 +550,12 @@ class WhatsAppAdapter extends EventEmitter {
 
   /** Send a plain text message. Returns the WA message id. */
   async sendText(accountId: string, jid: string, text: string): Promise<string | undefined> {
+    // Guard: never ship empty/whitespace bubbles. Empty steps or an LLM
+    // returning "" would otherwise reach customers as blank messages.
+    if (!text || !text.trim()) {
+      logger.warn({ accountId, jid }, 'BaileysAdapter.sendText: skipped empty text');
+      return undefined;
+    }
     const sock = this.requireSock(accountId);
     const res = await this.safeSend(accountId, () => sock.sendMessage(jid, { text }));
     return res?.key?.id ?? undefined;

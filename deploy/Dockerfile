@@ -39,7 +39,10 @@ RUN cd server && npx prisma generate --schema=./prisma/schema.prisma \
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache openssl tini \
+# ffmpeg: required for audio transcoding (uploaded MP3/M4A → opus/ogg
+# WhatsApp voice-notes). The bundled ffmpeg-static binary is glibc-linked
+# and cannot run on Alpine/musl — the system package is the working one.
+RUN apk add --no-cache openssl tini ffmpeg \
  && addgroup -g 1001 -S nodejs \
  && adduser -u 1001 -S nodejs -G nodejs
 

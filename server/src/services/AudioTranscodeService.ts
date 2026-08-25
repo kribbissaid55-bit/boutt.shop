@@ -16,12 +16,44 @@
  * is cached in a JSON sidecar (`<src>.opus.ogg.meta.json`). MediaService.remove
  * cleans both when the source is deleted.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import ffmpegPathRaw from 'ffmpeg-static';
 import { logger } from '../config/logger.js';
 
-const ffmpegPath: string | null = (ffmpegPathRaw as unknown as string | null) ?? null;
+/**
+ * Resolve a WORKING ffmpeg binary. Order:
+ *   1. FFMPEG_PATH env override
+ *   2. system ffmpeg (apk/apt installed — required on Alpine/musl containers,
+ *      where the glibc-linked ffmpeg-static binary cannot execute)
+ *   3. the ffmpeg-static bundled binary
+ * Each candidate is probed with `-version` once at startup; the first one
+ * that actually runs wins. On musl (our Docker image) ffmpeg-static EXISTS
+ * on disk but fails to exec — probing catches that instead of failing later
+ * at send time and silently shipping un-transcoded m4a to WhatsApp.
+ */
+function resolveFfmpeg(): string | null {
+  const candidates = [
+    process.env.FFMPEG_PATH,
+    '/usr/bin/ffmpeg',
+    '/usr/local/bin/ffmpeg',
+    'ffmpeg',
+    (ffmpegPathRaw as unknown as string | null) ?? undefined,
+  ].filter((c): c is string => !!c);
+  for (const c of candidates) {
+    try {
+      const r = spawnSync(c, ['-version'], { stdio: 'ignore', timeout: 5000 });
+      if (r.status === 0) {
+        logger.info({ ffmpeg: c }, 'AudioTranscode: ffmpeg resolved');
+        return c;
+      }
+    } catch { /* try next */ }
+  }
+  logger.error('AudioTranscode: NO working ffmpeg found — audio uploads will be sent untranscoded and may not play on WhatsApp. Install ffmpeg (apk add ffmpeg) or set FFMPEG_PATH.');
+  return null;
+}
+
+const ffmpegPath: string | null = resolveFfmpeg();
 
 /** True when the file is already in a WhatsApp-native voice-note format. */
 function isNativeVoiceMime(mime: string): boolean {
