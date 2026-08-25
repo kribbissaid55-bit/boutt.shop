@@ -708,6 +708,7 @@ export async function aiHandleIncoming(c: AiHandleContext): Promise<boolean> {
     burstThreshold: settings.burst_threshold_count,
     burstWindowMin: settings.burst_window_minutes,
     burstCooldownSec: settings.burst_cooldown_seconds,
+    warmupEnabled: settings.warmup_enabled,
   }).catch((e) => logger.warn({ err: e }, 'AI reply enqueue failed'));
 
   return true;

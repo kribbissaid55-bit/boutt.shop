@@ -21,6 +21,10 @@ export type AppSettings = {
   burst_threshold_count: number;
   burst_window_minutes: number;
   burst_cooldown_seconds: number;
+  // Optional gradual warm-up: caps a fresh number's daily automated sends by
+  // account age (ramps up over ~30 days). OFF by default — the operator opts
+  // in from Settings if they want the extra ban protection.
+  warmup_enabled: boolean;
   auto_pause_on_manual_reply: boolean;
   auto_resume_after_hours: number;   // 0 = never auto-resume
   never_auto_resume_if_ordered_or_rejected: boolean;
@@ -57,6 +61,7 @@ const DEFAULTS: AppSettings = {
   burst_threshold_count: 50,
   burst_window_minutes: 30,
   burst_cooldown_seconds: 15,
+  warmup_enabled: false,
   auto_pause_on_manual_reply: true,
   auto_resume_after_hours: 0,
   never_auto_resume_if_ordered_or_rejected: true,

@@ -78,6 +78,9 @@ export interface QueueOpts {
   burstThreshold?: number;   // count
   burstWindowMin?: number;   // window minutes
   burstCooldownSec?: number; // extra wait when threshold hit
+  /** Opt-in gradual warm-up (age-based daily cap for fresh numbers). When
+   *  false/undefined the operator's own cap governs from day one. */
+  warmupEnabled?: boolean;
   /** When true, skip the random human-like delay (1.2-3.5s). Use for admin
    *  manual sends from the inbox — the human is already waiting. Bot/campaign
    *  /follow-up sends should leave this off so they look natural. */
@@ -127,13 +130,12 @@ export const MessageQueueService = {
       const configuredCap = (typeof opts.dailyCap === 'number' && opts.dailyCap > 0)
         ? opts.dailyCap
         : 100;
-      // Warm-up: an account younger than ~30 days is capped by its age, no
-      // matter how high the operator set the cap. This is the strongest
-      // code-level protection against fresh-number bans.
+      // Warm-up (OPT-IN): when enabled, an account younger than ~30 days is
+      // capped by its age. Off by default — the operator's own cap governs.
       const ageDays = acc?.createdAt
         ? Math.floor((Date.now() - acc.createdAt.getTime()) / 86_400_000)
         : 999;
-      const warmCap = warmupCapForAgeDays(ageDays);
+      const warmCap = opts.warmupEnabled ? warmupCapForAgeDays(ageDays) : Number.MAX_SAFE_INTEGER;
       const cap = Math.min(configuredCap, warmCap);
       const todaySent = Math.max(s.sentToday, dbSentToday);
       if (todaySent >= cap) {
@@ -158,7 +160,7 @@ export const MessageQueueService = {
       // 4. Base random human-like delay (skipped for admin manual sends).
       //    Fresh accounts get extra spacing on top — slower pacing during
       //    warm-up looks more human and further lowers ban risk.
-      const warmDelay = opts.bypassDelay ? 0 : warmupExtraDelayMs(ageDays);
+      const warmDelay = (opts.bypassDelay || !opts.warmupEnabled) ? 0 : warmupExtraDelayMs(ageDays);
       const baseDelay = opts.bypassDelay ? 0 : randInt(opts.minDelayMs, opts.maxDelayMs);
       const totalDelay = baseDelay + extraDelay + warmDelay;
       if (totalDelay > 0) await sleep(totalDelay);

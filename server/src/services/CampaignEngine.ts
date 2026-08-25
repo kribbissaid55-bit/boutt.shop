@@ -141,6 +141,7 @@ async function tickCampaign(campaignId: string) {
             burstThreshold: settings.burst_threshold_count,
             burstWindowMin: settings.burst_window_minutes,
             burstCooldownSec: settings.burst_cooldown_seconds,
+    warmupEnabled: settings.warmup_enabled,
           });
           await prisma.retargetingCampaignLog.update({
             where: { id: log.id }, data: { status: 'sent', sentAt: new Date() },

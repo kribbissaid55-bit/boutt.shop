@@ -771,6 +771,8 @@ export const fr: typeof ar = {
     burstThreshold: 'Seuil de rafale (nb messages)',
     burstWindow: 'Fenêtre de rafale (min)',
     burstCooldown: 'Cooldown après rafale (s)',
+    warmupEnabled: 'Warm-up progressif du nouveau numéro',
+    warmupHint: 'Optionnel — limite un nouveau numéro puis augmente sur ~30 jours pour réduire le risque de ban. Désactivé par défaut.',
     ignoreGroups: 'Ignorer les groupes par défaut',
     handoverKeywords: 'Mots de transfert (un par ligne)',
     handoverMessage: 'Message de transfert',

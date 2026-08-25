@@ -399,6 +399,7 @@ async function runTick() {
             burstThreshold: settings.burst_threshold_count,
             burstWindowMin: settings.burst_window_minutes,
             burstCooldownSec: settings.burst_cooldown_seconds,
+    warmupEnabled: settings.warmup_enabled,
           });
 
           await prisma.followUpLog.update({

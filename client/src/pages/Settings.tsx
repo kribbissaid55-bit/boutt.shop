@@ -28,6 +28,7 @@ type Settings = {
   burst_threshold_count: number;
   burst_window_minutes: number;
   burst_cooldown_seconds: number;
+  warmup_enabled: boolean;
   handover_keywords: string[];
   handover_message: string;
   working_hours: { enabled: boolean; start: string; end: string; tz: string };
@@ -97,9 +98,12 @@ function BotSettingsTab() {
     </label>
   );
 
-  const Row = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  const Row = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
     <div className="flex items-center justify-between gap-3 py-2">
-      <span className="text-sm text-gray-700">{label}</span>
+      <span className="text-sm text-gray-700">
+        {label}
+        {hint && <span className="mt-0.5 block text-xs font-normal text-gray-400">{hint}</span>}
+      </span>
       {children}
     </div>
   );
@@ -154,6 +158,10 @@ function BotSettingsTab() {
             <Field label={t.settings.burstThreshold}><Input type="number" value={s.burst_threshold_count} onChange={(e) => update({ burst_threshold_count: +e.target.value })} /></Field>
             <Field label={t.settings.burstWindow}><Input type="number" value={s.burst_window_minutes} onChange={(e) => update({ burst_window_minutes: +e.target.value })} /></Field>
             <Field label={t.settings.burstCooldown}><Input type="number" value={s.burst_cooldown_seconds} onChange={(e) => update({ burst_cooldown_seconds: +e.target.value })} /></Field>
+            <hr className="border-gray-100" />
+            <Row label={t.settings.warmupEnabled} hint={t.settings.warmupHint}>
+              <Toggle checked={s.warmup_enabled} onChange={(v) => update({ warmup_enabled: v })} />
+            </Row>
           </CardBody>
         </Card>
 
