@@ -14,6 +14,7 @@ import { Button } from '../../../components/ui/Button';
 import { Input, Field, Textarea } from '../../../components/ui/Input';
 import { Modal } from '../../../components/ui/Modal';
 import { MediaPickerModal } from './MediaPickerModal';
+import { PromptBuilderModal } from './PromptBuilderModal';
 import { UnifiedBotTest } from './UnifiedBotTest';
 
 type AiCfg = {
@@ -248,6 +249,7 @@ export function BotAiTab({ botId, onSwitchToSteps }: { botId: string; onSwitchTo
   // prompt text. GC on save drops entries whose label no longer appears.
   const [instructionMedia, setInstructionMedia] = useState<InstructionMediaItem[]>([]);
   const [instructionPickerOpen, setInstructionPickerOpen] = useState(false);
+  const [promptBuilderOpen, setPromptBuilderOpen] = useState(false);
   const systemPromptRef = useRef<HTMLTextAreaElement>(null);
   // Customer status tags (admin chip + WA chat label). Hydrated from cfg.
   const [tagsCfg, setTagsCfg] = useState<CustomerTagsConfig>(DEFAULT_TAGS_CONFIG);
@@ -493,15 +495,32 @@ export function BotAiTab({ botId, onSwitchToSteps }: { botId: string; onSwitchTo
                   onChange={(e) => update({ systemPrompt: e.target.value })}
                 />
               </Field>
-              <button
-                type="button"
-                onClick={() => setInstructionPickerOpen(true)}
-                title={t.builder.ai.instructionMediaAdd}
-                aria-label={t.builder.ai.instructionMediaAdd}
-                className="absolute top-7 end-2 inline-flex items-center gap-1 rounded-full border border-violet-200 bg-white px-2 py-1 text-[11px] font-medium text-violet-700 shadow-sm hover:border-violet-400 hover:bg-violet-50"
-              >
-                <Paperclip size={12} /> {t.builder.ai.instructionMediaAdd}
-              </button>
+              <div className="absolute top-7 end-2 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPromptBuilderOpen(true)}
+                  title={t.builder.ai.pbOpen}
+                  aria-label={t.builder.ai.pbOpen}
+                  className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-white px-2 py-1 text-[11px] font-medium text-violet-700 shadow-sm hover:border-violet-400 hover:bg-violet-50"
+                >
+                  <Sparkles size={12} /> {t.builder.ai.pbOpen}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInstructionPickerOpen(true)}
+                  title={t.builder.ai.instructionMediaAdd}
+                  aria-label={t.builder.ai.instructionMediaAdd}
+                  className="inline-flex items-center gap-1 rounded-full border border-violet-200 bg-white px-2 py-1 text-[11px] font-medium text-violet-700 shadow-sm hover:border-violet-400 hover:bg-violet-50"
+                >
+                  <Paperclip size={12} /> {t.builder.ai.instructionMediaAdd}
+                </button>
+              </div>
+              <PromptBuilderModal
+                open={promptBuilderOpen}
+                onClose={() => setPromptBuilderOpen(false)}
+                botId={botId}
+                onAdopt={(p) => update({ systemPrompt: p })}
+              />
             </div>
           </CardBody>
         </Card>

@@ -31,6 +31,7 @@ import { followupRouter } from './routes/followup.routes.js';
 import { segmentsRouter } from './routes/segments.routes.js';
 import { retargetingRouter } from './routes/retargeting.routes.js';
 import { aiRouter } from './routes/ai.routes.js';
+import { promptBuilderRouter } from './routes/promptBuilder.routes.js';
 import { productsRouter } from './routes/products.routes.js';
 import { storageRouter } from './routes/storage.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
@@ -112,6 +113,7 @@ export function buildApp() {
   app.use('/api/settings', settingsRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api', aiRouter);        // /bots/:id/ai, /ai/credentials
+  app.use('/api', promptBuilderRouter); // /bots/:id/ai/prompt-builder
   app.use('/api/products', productsRouter);
   app.use('/api/storage', storageRouter);
   app.use('/api/logs', logsRouter);
