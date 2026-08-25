@@ -23,6 +23,7 @@ import { LogsPage } from './pages/Logs';
 import { AiKeysPage } from './pages/ai/AiKeysPage';
 import { ProductsPage } from './pages/products/ProductsPage';
 import { StoragePage } from './pages/storage/StoragePage';
+import { SocialPage } from './pages/social/SocialPage';
 
 export default function App() {
   const bootstrap = useAuth((s) => s.bootstrap);
@@ -81,6 +82,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/ai-keys" element={<AiKeysPage />} />
           <Route path="/products" element={<ProductsPage />} />
+          <Route path="/social" element={<SocialPage />} />
           <Route path="/storage" element={<StoragePage />} />
           <Route path="/logs" element={<LogsPage />} />
         </Route>

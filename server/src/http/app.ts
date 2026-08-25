@@ -32,6 +32,8 @@ import { segmentsRouter } from './routes/segments.routes.js';
 import { retargetingRouter } from './routes/retargeting.routes.js';
 import { aiRouter } from './routes/ai.routes.js';
 import { promptBuilderRouter } from './routes/promptBuilder.routes.js';
+import { socialRouter } from './routes/social.routes.js';
+import { socialWebhookRouter } from './routes/socialWebhook.routes.js';
 import { productsRouter } from './routes/products.routes.js';
 import { storageRouter } from './routes/storage.routes.js';
 import { adminRouter } from './routes/admin.routes.js';
@@ -58,6 +60,11 @@ export function buildApp() {
     },
     credentials: true,
   }));
+  // Meta webhook — mounted BEFORE the global json parser so it can capture
+  // the raw body for X-Hub-Signature-256 verification, and before auth
+  // because Meta's servers call it without a session cookie.
+  app.use(socialWebhookRouter);
+
   app.use(express.json({ limit: '2mb' }));
   app.use(cookieParser());
 
@@ -114,6 +121,7 @@ export function buildApp() {
   app.use('/api/admin', adminRouter);
   app.use('/api', aiRouter);        // /bots/:id/ai, /ai/credentials
   app.use('/api', promptBuilderRouter); // /bots/:id/ai/prompt-builder
+  app.use('/api', socialRouter);        // /social/* — pages, accounts, events
   app.use('/api/products', productsRouter);
   app.use('/api/storage', storageRouter);
   app.use('/api/logs', logsRouter);

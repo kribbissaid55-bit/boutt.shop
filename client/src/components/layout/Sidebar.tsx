@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Smartphone, Bot, Image, MessageSquare, MessageCircleReply,
-  Users, Settings, FileText, LogOut, Languages, Clock, Filter, Megaphone, KeyRound, Package, HardDrive,
+  Users, Settings, FileText, LogOut, Languages, Clock, Filter, Megaphone, KeyRound, Package, HardDrive, Share2,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useAuth, type UserRole } from '../../store/auth';
@@ -33,6 +33,7 @@ export function Sidebar() {
     { to: '/follow-ups', icon: Clock, label: t.followups.title },
     { to: '/retargeting', icon: Megaphone, label: t.campaigns.title },
     { to: '/products', icon: Package, label: t.products.title },
+    { to: '/social', icon: Share2, label: t.social.title },
     { to: '/ai-keys', icon: KeyRound, label: t.aiKeys.title },
     { to: '/storage', icon: HardDrive, label: t.storage.title },
     { to: '/settings', icon: Settings, label: t.nav.settings },

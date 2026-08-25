@@ -667,3 +667,54 @@ model WhatsAppChatLabel {
   account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
   @@unique([accountId, statusKey])
 }
+
+// ─── Social module: Facebook / Instagram pages + comment & DM automation ───
+
+// A connected social property (FB page, with optional linked IG business
+// account). accessToken is encrypted at rest with the same AES-256-GCM vault
+// used for AI credentials (lib/ai-crypto).
+model SocialAccount {
+  id                    String   @id @default(cuid())
+  platform              String   // 'facebook' (page + messenger + linked IG) | 'tiktok' (future)
+  pageId                String   // FB page id — also the Messenger sender id
+  igUserId              String?  // linked Instagram business account id
+  igUsername            String?
+  name                  String
+  avatarUrl             String?
+  accessToken           String   // encrypted page access token
+  enabled               Boolean  @default(true)
+  commentAutoReply      Boolean  @default(true)
+  dmAutoReply           Boolean  @default(true)
+  privateReplyOnComment Boolean  @default(true)  // also DM the commenter (lead capture)
+  ctaMode               String   @default("whatsapp") // whatsapp | messenger | none
+  whatsappNumber        String?  // international digits for wa.me links
+  skills                String?  // JSON string[] of enabled sales-skill keys
+  botId                 String?  // borrow this bot's AI persona + product knowledge
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  events                SocialEvent[]
+  @@unique([platform, pageId])
+}
+
+// Audit log of everything the social agent saw and did. externalId is the
+// platform's comment/message id — the unique constraint doubles as webhook
+// deduplication (Meta redelivers events).
+model SocialEvent {
+  id               String   @id @default(cuid())
+  accountId        String
+  account          SocialAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  platform         String   // facebook | instagram | messenger
+  kind             String   // comment | dm
+  externalId       String
+  senderId         String?
+  senderName       String?
+  inText           String
+  replyText        String?
+  privateReplyText String?
+  status           String   @default("replied") // replied | skipped | error
+  error            String?
+  createdAt        DateTime @default(now())
+  @@unique([platform, externalId])
+  @@index([accountId, createdAt])
+  @@index([accountId, senderId, createdAt])
+}
