@@ -31,7 +31,19 @@ class LocalStorage implements StorageAdapter {
     const dest = path.join(this.root, destRelative);
     assertUnderRoot(this.root, dest);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.renameSync(srcPath, dest);
+    try {
+      fs.renameSync(srcPath, dest);
+    } catch (e: any) {
+      // EXDEV: rename() can't cross filesystems — happens in production where
+      // multer's tmp dir (/tmp) and the storage volume (/app/storage) live on
+      // different devices. Fall back to copy + unlink.
+      if (e?.code === 'EXDEV') {
+        fs.copyFileSync(srcPath, dest);
+        fs.unlinkSync(srcPath);
+      } else {
+        throw e;
+      }
+    }
     return destRelative;
   }
   resolve(relative: string): string {
