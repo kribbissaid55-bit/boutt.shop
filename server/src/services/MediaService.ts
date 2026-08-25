@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
 import { prisma } from '../lib/prisma.js';
 import { storage } from '../adapters/storage/index.js';
+import { AudioTranscodeService } from './AudioTranscodeService.js';
+import { logger } from '../config/logger.js';
 
 const AUDIO_MAX = 50 * 1024 * 1024;   // 50MB — voice notes can be long
 const IMAGE_MAX = 25 * 1024 * 1024;
@@ -145,13 +147,41 @@ export const MediaService = {
       );
     }
 
-    const ext = detected?.ext ?? (fileExt || 'bin');
+    let ext = detected?.ext ?? (fileExt || 'bin');
+    let uploadPath = tmpPath;
+    let uploadSize = stat.size;
+
+    // ── WhatsApp audio normalization AT UPLOAD ──────────────────────────
+    // Every audio the operator uploads (m4a / mp3 / wav / 48kHz opus / …)
+    // is transcoded HERE into the exact format WhatsApp's own recorder
+    // produces (opus in ogg, 16 kHz mono, voip profile). The library then
+    // only ever stores WhatsApp-native audio, so sends can never ship an
+    // unplayable format. On transcode failure we keep the original and log.
+    if (rule.type === 'audio' && AudioTranscodeService.available()) {
+      const oggTmp = `${tmpPath}.norm.ogg`;
+      try {
+        await AudioTranscodeService.transcodeFile(tmpPath, oggTmp);
+        const st = fs.statSync(oggTmp);
+        if (st.size > 0) {
+          fs.unlinkSync(tmpPath);
+          uploadPath = oggTmp;
+          uploadSize = st.size;
+          ext = 'ogg';
+          mime = 'audio/ogg; codecs=opus';
+          logger.info({ originalName, size: st.size }, 'MediaService: audio normalized to WhatsApp opus/ogg at upload');
+        }
+      } catch (e: any) {
+        logger.error({ err: e?.message, originalName }, 'MediaService: upload-time audio transcode failed — storing original');
+        fs.promises.unlink(oggTmp).catch(() => {});
+      }
+    }
+
     const now = new Date();
     const yyyy = String(now.getFullYear());
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const rel = path.join(yyyy, mm, `${id}.${ext}`);
-    await storage.saveFromPath(tmpPath, rel);
+    await storage.saveFromPath(uploadPath, rel);
 
     const safeName = originalName.replace(/[^\w.\-أ-ي ]+/g, '_').slice(0, 200);
 
@@ -160,7 +190,7 @@ export const MediaService = {
         name: safeName || `file.${ext}`,
         type: rule.type,
         mimeType: mime,
-        sizeBytes: stat.size,
+        sizeBytes: uploadSize,
         path: rel,
       },
     });
@@ -184,5 +214,47 @@ export const MediaService = {
 
   resolveAbsolute(rel: string): string {
     return storage.resolve(rel);
+  },
+
+  /**
+   * One-time boot migration: re-encode every audio row that is NOT already
+   * stored in the WhatsApp-native opus/ogg format. Fixes libraries populated
+   * before upload-time normalization existed (e.g. an m4a that WhatsApp
+   * would accept for sending but refuse to play). Safe to run on every boot:
+   * once every row is audio/ogg it becomes a no-op. Never throws.
+   */
+  async normalizeExistingAudio(): Promise<void> {
+    try {
+      if (!AudioTranscodeService.available()) return;
+      const rows = await prisma.mediaFile.findMany({
+        where: { type: 'audio', NOT: { mimeType: { contains: 'ogg' } } },
+      });
+      if (!rows.length) return;
+      logger.info({ count: rows.length }, 'MediaService: normalizing existing audio files to WhatsApp opus/ogg');
+      for (const row of rows) {
+        try {
+          const abs = storage.resolve(row.path);
+          if (!fs.existsSync(abs)) { logger.warn({ id: row.id, path: row.path }, 'normalizeAudio: source missing — skipped'); continue; }
+          const newRel = row.path.replace(/\.[A-Za-z0-9]+$/, '') + '.ogg';
+          const dstAbs = storage.resolve(newRel);
+          await AudioTranscodeService.transcodeFile(abs, dstAbs);
+          const st = fs.statSync(dstAbs);
+          if (!(st.size > 0)) throw new Error('empty transcode output');
+          await prisma.mediaFile.update({
+            where: { id: row.id },
+            data: { path: newRel, mimeType: 'audio/ogg; codecs=opus', sizeBytes: st.size },
+          });
+          // Drop the old source + any stale transcode companions.
+          if (abs !== dstAbs) await fs.promises.unlink(abs).catch(() => {});
+          await fs.promises.unlink(`${abs}.opus.ogg`).catch(() => {});
+          await fs.promises.unlink(`${abs}.opus.ogg.meta.json`).catch(() => {});
+          logger.info({ id: row.id, from: row.mimeType, to: newRel }, 'normalizeAudio: converted');
+        } catch (e: any) {
+          logger.error({ id: row.id, err: e?.message }, 'normalizeAudio: failed for row — kept original');
+        }
+      }
+    } catch (e: any) {
+      logger.error({ err: e?.message }, 'normalizeAudio: sweep failed');
+    }
   },
 };

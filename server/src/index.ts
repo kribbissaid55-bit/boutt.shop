@@ -76,6 +76,12 @@ async function main() {
   // Create the admin account on a fresh database (Docker first boot).
   await bootstrapAdmin();
 
+  // Normalize any pre-existing audio uploads to WhatsApp-native opus/ogg
+  // (non-blocking — new uploads are normalized inline at upload time).
+  import('./services/MediaService.js')
+    .then(({ MediaService }) => MediaService.normalizeExistingAudio())
+    .catch((e) => logger.warn({ err: e }, 'normalizeExistingAudio failed'));
+
   WhatsAppSessionService.init(
     (m) => BotEngineService.handleIncoming(m),
     (c) => handleIncomingCall(c),

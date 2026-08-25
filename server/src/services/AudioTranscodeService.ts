@@ -237,7 +237,33 @@ async function probeDurationSeconds(src: string): Promise<number | undefined> {
   });
 }
 
+/** Quick container sanity check — a valid transcode output must start with
+ *  the OggS magic. Guards against corrupted/partial cached companions from
+ *  earlier failed runs being reused forever. */
+async function isValidOgg(p: string): Promise<boolean> {
+  try {
+    const fd = await fs.promises.open(p, 'r');
+    const head = Buffer.alloc(4);
+    await fd.read(head, 0, 4, 0);
+    await fd.close();
+    return head.toString('latin1') === 'OggS';
+  } catch { return false; }
+}
+
 export const AudioTranscodeService = {
+  /** True when ffmpeg is available (upload-time normalization possible). */
+  available(): boolean { return !!ffmpegPath; },
+
+  /**
+   * Direct one-shot transcode src → dst in the WhatsApp voice-note format
+   * (opus/ogg, 16 kHz mono, voip profile). Used at UPLOAD time to normalize
+   * every audio file the operator adds, so the library only ever stores
+   * WhatsApp-native audio. Throws on failure — caller decides the fallback.
+   */
+  async transcodeFile(src: string, dst: string): Promise<{ seconds?: number }> {
+    return runFfmpeg(src, dst);
+  },
+
   /**
    * Ensure the given file is available in an opus/ogg form suitable for
    * WhatsApp voice-notes. Returns the path + mimetype the caller should
@@ -263,17 +289,24 @@ export const AudioTranscodeService = {
     const metaPath = cachedMetaPath(srcAbsPath);
 
     if (await fileExistsNonEmpty(dst)) {
-      const meta = await readMeta(metaPath);
-      const cachedWaveform = meta?.waveformB64
-        ? Buffer.from(meta.waveformB64, 'base64')
-        : undefined;
-      return {
-        path: dst,
-        mimeType: 'audio/ogg; codecs=opus',
-        transcoded: true,
-        seconds: meta?.seconds,
-        waveform: cachedWaveform && cachedWaveform.length === 64 ? cachedWaveform : undefined,
-      };
+      if (await isValidOgg(dst)) {
+        const meta = await readMeta(metaPath);
+        const cachedWaveform = meta?.waveformB64
+          ? Buffer.from(meta.waveformB64, 'base64')
+          : undefined;
+        return {
+          path: dst,
+          mimeType: 'audio/ogg; codecs=opus',
+          transcoded: true,
+          seconds: meta?.seconds,
+          waveform: cachedWaveform && cachedWaveform.length === 64 ? cachedWaveform : undefined,
+        };
+      }
+      // Corrupted/partial cache (e.g. from an earlier run without a working
+      // ffmpeg) — discard and re-transcode fresh.
+      logger.warn({ dst }, 'AudioTranscode: cached companion is not valid Ogg — re-transcoding');
+      await fs.promises.unlink(dst).catch(() => {});
+      await fs.promises.unlink(metaPath).catch(() => {});
     }
     if (!ffmpegPath) {
       logger.error(
