@@ -13,8 +13,7 @@
  */
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../config/logger.js';
-import { whatsapp } from '../adapters/whatsapp/BaileysAdapter.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
+import { providerFor, markReadFor } from '../adapters/whatsapp/providerFactory.js';
 import { ContactService } from '../services/ContactService.js';
 import { SettingsService } from '../services/SettingsService.js';
 import { MessageQueueService } from '../services/MessageQueueService.js';
@@ -204,8 +203,8 @@ export async function handleIncoming(m: IncomingMessage): Promise<void> {
 
   // Mark as read on WA side BEFORE replying — humanizes the conversation.
   // Skip during cooldown to avoid hitting the rate-limited socket.
-  if (!inCooldown && settings.read_receipts && m.rawKey) {
-    whatsapp.markRead(m.accountId, m.rawKey).catch(() => {});
+  if (!inCooldown && settings.read_receipts) {
+    markReadFor(m).catch(() => {});
   }
 
   const now = new Date();
@@ -357,6 +356,7 @@ export async function handleIncoming(m: IncomingMessage): Promise<void> {
 
       let sentWaId: string | undefined;
       let sentType: 'audio' | 'text' = 'text';
+      const vProvider = providerFor(m.accountId);
 
       if (useVoice) {
         try {
@@ -372,8 +372,7 @@ export async function handleIncoming(m: IncomingMessage): Promise<void> {
           });
           const tmp = path.join(os.tmpdir(), `voice-fail-${crypto.randomBytes(6).toString('hex')}.ogg`);
           await fs.promises.writeFile(tmp, audio);
-          sentWaId = await whatsapp.sendMedia(m.accountId, contact.jid, {
-            type: 'audio',
+          sentWaId = await vProvider.sendAudio(contact.jid, {
             filePath: tmp,
             mimeType: 'audio/ogg; codecs=opus',
             fileName: 'reply.ogg',
@@ -385,11 +384,11 @@ export async function handleIncoming(m: IncomingMessage): Promise<void> {
             { err: e, contactId: contact.id },
             'voice: TTS failed for resend request — falling back to text',
           );
-          sentWaId = await whatsapp.sendText(m.accountId, contact.jid, VOICE_FALLBACK_TEXT);
+          sentWaId = await vProvider.sendText(contact.jid, VOICE_FALLBACK_TEXT);
           sentType = 'text';
         }
       } else {
-        sentWaId = await whatsapp.sendText(m.accountId, contact.jid, VOICE_FALLBACK_TEXT);
+        sentWaId = await vProvider.sendText(contact.jid, VOICE_FALLBACK_TEXT);
         sentType = 'text';
       }
 
@@ -640,7 +639,7 @@ async function walkAndQueue(
   const bot = await prisma.bot.findUnique({ where: { id: botId } });
   if (!contact || !bot) return;
 
-  const provider = new BaileysProvider(accountId);
+  const provider = providerFor(accountId);
 
   await MessageQueueService.enqueue(accountId, async () => {
     if (settings.typing_simulation) {
@@ -678,7 +677,7 @@ async function sendRawText(
   const settings = await SettingsService.load();
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
   if (!account) return;
-  const provider = new BaileysProvider(accountId);
+  const provider = providerFor(accountId);
   await MessageQueueService.enqueue(accountId, async () => {
     const waId = await provider.sendText(jid, text);
     const msg = await prisma.message.create({

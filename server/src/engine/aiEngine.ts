@@ -26,12 +26,12 @@
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../config/logger.js';
 import { AiProvider, type ChatMessage } from '../services/AiProvider.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
+import { providerFor } from '../adapters/whatsapp/providerFactory.js';
 import { MessageQueueService } from '../services/MessageQueueService.js';
 import { SettingsService } from '../services/SettingsService.js';
 import { MediaService } from '../services/MediaService.js';
 import { bus } from '../services/EventBus.js';
-import { whatsapp } from '../adapters/whatsapp/BaileysAdapter.js';
+import { CloudApiService } from '../services/CloudApiService.js';
 import { phoneFromJid, resolveContactPhone } from '../lib/jid.js';
 import { toMoroccanLocal } from '../services/phone.js';
 import { sleep } from '../lib/retry.js';
@@ -537,7 +537,7 @@ export async function aiHandleIncoming(c: AiHandleContext): Promise<boolean> {
   const account = await prisma.whatsAppAccount.findUnique({ where: { id: c.accountId } });
   if (!account) return true;
   const settings = await SettingsService.load();
-  const provider = new BaileysProvider(c.accountId);
+  const provider = providerFor(c.accountId);
   // replyMode was resolved upstream (right after history.reverse) so we could
   // pick the right LLM provider for voice turns. It's still in scope here.
 
@@ -645,7 +645,7 @@ export async function aiHandleIncoming(c: AiHandleContext): Promise<boolean> {
       }
       try {
         // Humanize: pretend to "record" before sending the voice note.
-        await whatsapp.simulateTyping(c.accountId, c.jid, Math.min(3000, 800 + Math.floor(Math.random() * 2200)));
+        await provider.simulateTyping(c.jid, Math.min(3000, 800 + Math.floor(Math.random() * 2200)));
         const audio = await AiProvider.tts(replyText, {
           voice: cfg.voiceId,
           provider: cfg.voiceProvider,
@@ -698,7 +698,7 @@ export async function aiHandleIncoming(c: AiHandleContext): Promise<boolean> {
 
     // Text mode, no media → one text bubble.
     const typingMs = Math.min(3500, 400 + replyText.length * 25);
-    await whatsapp.simulateTyping(c.accountId, c.jid, typingMs);
+    await provider.simulateTyping(c.jid, typingMs);
     const waId = await provider.sendText(c.jid, replyText);
     await persistAiOut(c, 'text', replyText, undefined, waId);
   }, {
@@ -963,7 +963,7 @@ async function forwardOrderToOwner(ownerPhone: string, accountId: string, contac
     `🕐 ${ts}`,
   ].filter(Boolean).join('\n');
   try {
-    await whatsapp.sendText(accountId, ownerJid, message);
+    await providerFor(accountId).sendText(ownerJid, message);
   } catch (e) {
     logger.warn({ err: e, ownerJid }, 'forwardOrderToOwner failed');
   }
@@ -972,6 +972,17 @@ async function forwardOrderToOwner(ownerPhone: string, accountId: string, contac
 /** Best-effort STT helper — fetches the WA media for an incoming audio
  *  message and returns the transcript. Caller passes empty string on miss. */
 export async function transcribeIfAudio(m: IncomingMessage, msg: any, extraPrompt?: string): Promise<string | null> {
+  // Official Cloud API path — the webhook attaches { cloudMedia: { id, mimeType } }
+  // instead of a Baileys proto; download via the Graph media endpoint.
+  if (msg?.cloudMedia?.id) {
+    try {
+      const { buffer, mimeType } = await CloudApiService.downloadMedia(String(msg.cloudMedia.id));
+      return await AiProvider.transcribe(buffer, msg.cloudMedia.mimeType ?? mimeType, extraPrompt);
+    } catch (e) {
+      logger.warn({ err: e, accountId: m.accountId }, 'transcribeIfAudio (cloud) failed');
+      return null;
+    }
+  }
   const audio = msg?.message?.audioMessage;
   if (!audio) return null;
   try {
@@ -1041,7 +1052,7 @@ export async function buildCatalogContext(botId: string): Promise<string> {
  */
 async function sendCatalogMedia(
   c: AiHandleContext,
-  provider: BaileysProvider,
+  provider: import('../adapters/whatsapp/BotProvider.js').BotProvider,
   mediaId: string,
   caption?: string,
 ): Promise<void> {

@@ -5,6 +5,7 @@ export type AppEvents =
   | { type: 'account.status'; accountId: string; status: string; phoneNumber?: string | null; lastError?: string | null }
   | { type: 'message.in'; accountId: string; contactId: string; messageId: string }
   | { type: 'message.out'; accountId: string; contactId: string; messageId: string }
+  | { type: 'message.status'; accountId: string; contactId: string; messageId: string; status: string }
   | { type: 'log'; level: string; message: string }
   | { type: 'settings.update' };
 

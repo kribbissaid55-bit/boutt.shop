@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Smartphone, Bot, Image, MessageSquare, MessageCircleReply,
-  Users, Settings, FileText, LogOut, Languages, Clock, Filter, Megaphone, KeyRound, Package, HardDrive, Share2,
+  Users, Settings, FileText, LogOut, Languages, Clock, Filter, Megaphone, KeyRound, Package, HardDrive, Share2, BadgeCheck,
 } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useAuth, type UserRole } from '../../store/auth';
@@ -24,6 +24,7 @@ export function Sidebar() {
   const allItems = [
     { to: '/', icon: LayoutDashboard, label: t.nav.dashboard, end: true },
     { to: '/accounts', icon: Smartphone, label: t.nav.accounts },
+    { to: '/wa-cloud', icon: BadgeCheck, label: t.waCloud.title },
     { to: '/bots', icon: Bot, label: t.nav.bots },
     { to: '/media', icon: Image, label: t.nav.media },
     { to: '/inbox', icon: MessageSquare, label: t.nav.inbox },

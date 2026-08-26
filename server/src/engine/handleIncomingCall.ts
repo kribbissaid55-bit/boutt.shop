@@ -19,7 +19,7 @@
 import { prisma } from '../lib/prisma.js';
 import { logger } from '../config/logger.js';
 import { whatsapp } from '../adapters/whatsapp/BaileysAdapter.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
+import { providerFor } from '../adapters/whatsapp/providerFactory.js';
 import { ContactService } from '../services/ContactService.js';
 import { SettingsService } from '../services/SettingsService.js';
 import { MessageQueueService } from '../services/MessageQueueService.js';
@@ -113,7 +113,7 @@ export async function handleIncomingCall(c: IncomingCall): Promise<void> {
     return;
   }
 
-  const provider = new BaileysProvider(c.accountId);
+  const provider = providerFor(c.accountId);
   const settings = await SettingsService.load();
 
   await MessageQueueService.enqueue(c.accountId, async () => {

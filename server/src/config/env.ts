@@ -27,6 +27,14 @@ const Schema = z.object({
   // Cookie domain for cross-origin deployments (e.g. ".shop.ma" to share
   // between api.shop.ma and app.shop.ma). Leave unset for same-origin.
   COOKIE_DOMAIN: z.string().optional(),
+  // ── Official WhatsApp Cloud API (Meta Graph API) ─────────────────────────
+  // Single source of truth for the Graph version used by BOTH the WhatsApp
+  // Cloud API layer and the social (FB/IG/Messenger) layer. Bump here only.
+  META_GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v23.0'),
+  // Default provider for NEW WhatsApp accounts: 'baileys' (QR, unofficial) or
+  // 'cloud' (official Meta Cloud API). Existing accounts keep their per-row
+  // `provider` column — this flag never rewrites them, so rollback is instant.
+  WA_PROVIDER: z.enum(['baileys', 'cloud']).default('baileys'),
 });
 
 const parsed = Schema.safeParse(process.env);

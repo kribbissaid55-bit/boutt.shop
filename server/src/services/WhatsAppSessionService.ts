@@ -104,6 +104,11 @@ export const WhatsAppSessionService = {
   async connect(id: string) {
     const acc = await prisma.whatsAppAccount.findUnique({ where: { id } });
     if (!acc) throw Object.assign(new Error('account not found'), { status: 404 });
+    // Cloud accounts have no Baileys session to start — they are "connected"
+    // by configuration (token + webhook). QR flow is Baileys-only.
+    if (acc.provider === 'cloud') {
+      throw Object.assign(new Error('cloud_account_no_qr'), { status: 400 });
+    }
     await whatsapp.start(id);
   },
 
@@ -116,7 +121,7 @@ export const WhatsAppSessionService = {
   },
 
   async remove(id: string) {
-    await whatsapp.logout(id);
+    await whatsapp.logout(id).catch(() => {}); // cloud accounts: no session — ignore
     try {
       const dir = path.join(env.SESSIONS_DIR, id);
       fs.rmSync(dir, { recursive: true, force: true });
@@ -130,7 +135,8 @@ export const WhatsAppSessionService = {
   /** Re-attach previously-connected accounts on boot. */
   async resumeAll() {
     const accounts = await prisma.whatsAppAccount.findMany({
-      where: { status: { in: ['connected', 'connecting', 'qr_required'] } },
+      // Cloud accounts never resume a socket — the webhook is their inbound.
+      where: { status: { in: ['connected', 'connecting', 'qr_required'] }, provider: 'baileys' },
     });
     for (const a of accounts) {
       try {

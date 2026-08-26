@@ -48,6 +48,16 @@ model WhatsAppAccount {
   // `isBusiness` is the derived flag — chat labels display ONLY when this is true.
   platform        String?
   isBusiness      Boolean?
+  // ── Provider routing ──────────────────────────────────────────────────────
+  // 'baileys' → unofficial WhatsApp Web session (QR). 'cloud' → official Meta
+  // WhatsApp Cloud API. The engine picks the send/receive path per-account via
+  // this column, so both providers coexist and rollback is a one-row update.
+  provider        String   @default("baileys")
+  // Cloud API identifiers (null for Baileys accounts). phoneNumberId is the
+  // Meta phone_number_id used in /{phone-number-id}/messages calls; wabaId is
+  // the owning WhatsApp Business Account id.
+  phoneNumberId   String?  @unique
+  wabaId          String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

@@ -19,8 +19,7 @@ import { logger } from '../config/logger.js';
 import { FollowUpRuleService, type RuleScope, type RuleConditions } from './FollowUpRuleService.js';
 import { MessageQueueService } from './MessageQueueService.js';
 import { SettingsService } from './SettingsService.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
-import { whatsapp } from '../adapters/whatsapp/BaileysAdapter.js';
+import { providerFor, isDeliverable, canSendFreeForm } from '../adapters/whatsapp/providerFactory.js';
 import { runMessageSequence } from '../engine/runMessageSequence.js';
 import { applyPreSendGuardrails } from '../engine/preSendGuardrails.js';
 import { bus } from './EventBus.js';
@@ -360,7 +359,7 @@ async function runTick() {
         if (hasInbound === 0) {
           try {
             const targetJid = (contact as any).phoneJid || contact.jid;
-            const registered = await whatsapp.isRegisteredOnWhatsApp(account.id, targetJid);
+            const registered = await isDeliverable(account.id, targetJid);
             if (!registered) {
               await prisma.followUpLog.update({
                 where: { id: log.id }, data: { status: 'skipped', reason: 'not_on_whatsapp' },
@@ -372,9 +371,18 @@ async function runTick() {
           }
         }
 
+        // Official-API policy: free-form follow-ups only land inside Meta's
+        // 24h window (Cloud accounts). Skip with a clear reason otherwise.
+        if (!(await canSendFreeForm(account.id, contact.id))) {
+          await prisma.followUpLog.update({
+            where: { id: log.id }, data: { status: 'skipped', reason: 'outside_24h_window_use_template' },
+          }).catch(() => {});
+          continue;
+        }
+
         // Send via the per-account queue (same anti-ban guards as bot replies)
         const sequence = FollowUpRuleService.parseMessageSequence(step.messageSequence);
-        const provider = new BaileysProvider(account.id);
+        const provider = providerFor(account.id);
         const ctx = {
           contact: { name: contact.name, jid: contact.jid },
           bot: { name: rule.name },

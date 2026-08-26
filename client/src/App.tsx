@@ -24,6 +24,7 @@ import { AiKeysPage } from './pages/ai/AiKeysPage';
 import { ProductsPage } from './pages/products/ProductsPage';
 import { StoragePage } from './pages/storage/StoragePage';
 import { SocialPage } from './pages/social/SocialPage';
+import { WhatsAppCloudPage } from './pages/whatsappCloud/WhatsAppCloudPage';
 
 export default function App() {
   const bootstrap = useAuth((s) => s.bootstrap);
@@ -68,6 +69,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route path="/accounts/:id" element={<AccountDetailPage />} />
+          <Route path="/wa-cloud" element={<WhatsAppCloudPage />} />
           <Route path="/bots" element={<BotsPage />} />
           <Route path="/bots/:id" element={<BotBuilderPage />} />
           <Route path="/media" element={<MediaPage />} />

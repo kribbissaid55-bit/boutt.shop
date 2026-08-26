@@ -16,7 +16,7 @@ import { walkStep } from '../engine/walkStep.js';
 import { StepMatcherService } from './StepMatcherService.js';
 import { MessageQueueService } from './MessageQueueService.js';
 import { SettingsService } from './SettingsService.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
+import { providerFor } from '../adapters/whatsapp/providerFactory.js';
 import { MediaService } from './MediaService.js';
 import { bus } from './EventBus.js';
 import type { IncomingMessage } from '../adapters/whatsapp/types.js';
@@ -34,7 +34,7 @@ export const BotEngineService = {
     const contact = await prisma.contact.findUnique({ where: { id: contactId } });
     if (!account || !contact) return;
     const bot = await prisma.bot.findFirst({ where: { steps: { some: { id: stepId } } } });
-    const provider = new BaileysProvider(accountId);
+    const provider = providerFor(accountId);
 
     await MessageQueueService.enqueue(accountId, async () =>
       walkStep(step, {
@@ -64,7 +64,7 @@ export const BotEngineService = {
     const settings = await SettingsService.load();
     const account = await prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
     if (!account) return;
-    const provider = new BaileysProvider(accountId);
+    const provider = providerFor(accountId);
     const abs = MediaService.resolveAbsolute(media.path);
 
     // Voice-note quirk: browsers (Chrome) record as audio/webm-opus, but

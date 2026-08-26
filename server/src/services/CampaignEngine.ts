@@ -19,8 +19,7 @@ import { logger } from '../config/logger.js';
 import { CampaignService } from './CampaignService.js';
 import { MessageQueueService } from './MessageQueueService.js';
 import { SettingsService } from './SettingsService.js';
-import { BaileysProvider } from '../adapters/whatsapp/BotProvider.js';
-import { whatsapp } from '../adapters/whatsapp/BaileysAdapter.js';
+import { providerFor, isDeliverable, canSendFreeForm } from '../adapters/whatsapp/providerFactory.js';
 import { runMessageSequence } from '../engine/runMessageSequence.js';
 
 const TICK_INTERVAL_MS = 10_000;
@@ -103,8 +102,10 @@ async function tickCampaign(campaignId: string) {
         // Anti-ban: never send to a jid that isn't registered on WhatsApp.
         // Campaigns are the highest-risk outbound path — one bad blast to
         // dead numbers can trigger a WA account ban. Cached 24h per jid.
+        // (Cloud accounts: no lookup API — isDeliverable returns true and the
+        // send itself surfaces Meta's error for non-WhatsApp numbers.)
         try {
-          const registered = await whatsapp.isRegisteredOnWhatsApp(account.id, contact.jid);
+          const registered = await isDeliverable(account.id, contact.jid);
           if (!registered) {
             await prisma.retargetingCampaignLog.update({
               where: { id: log.id }, data: { status: 'skipped', reason: 'not_on_whatsapp' },
@@ -115,8 +116,18 @@ async function tickCampaign(campaignId: string) {
           logger.warn({ err: e, contactId: contact.id }, 'campaign: onWhatsApp verify failed — proceeding cautiously');
         }
 
+        // Official-API policy: free-form sends only land inside Meta's 24h
+        // customer-service window. Fail fast with a clear reason instead of
+        // burning an API call Meta will reject (error 131047).
+        if (!(await canSendFreeForm(account.id, contact.id))) {
+          await prisma.retargetingCampaignLog.update({
+            where: { id: log.id }, data: { status: 'skipped', reason: 'outside_24h_window_use_template' },
+          });
+          continue;
+        }
+
         // Optimistic claim — flip pending→sent only after successful queue dispatch
-        const provider = new BaileysProvider(account.id);
+        const provider = providerFor(account.id);
         const ctx = {
           contact: { name: contact.name, jid: contact.jid },
           bot: { name: c.name },
