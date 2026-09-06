@@ -117,28 +117,56 @@ export async function handleIncomingCall(c: IncomingCall): Promise<void> {
   const settings = await SettingsService.load();
 
   await MessageQueueService.enqueue(c.accountId, async () => {
-    try {
-      await runMessageSequence(sequence!, {
-        accountId: c.accountId,
-        contactId: contact.id,
-        jid: c.from,
-        ctx: {
-          contact: { name: contact.name, jid: contact.jid },
-          bot: { name: bot?.name ?? '' },
-          account: { name: account.name },
-        },
-        provider,
-        senderType: 'bot',
-      });
-      // Mark the dedup timestamp ONLY after a successful send — failures
-      // shouldn't lock us out of retrying on the next call.
-      await prisma.contact.update({
-        where: { id: contact.id },
-        data: { lastCallRejectionMessageAt: new Date() } as any,
-      }).catch(() => {});
-    } catch (e) {
-      logger.error({ err: e, accountId: c.accountId, from: c.from }, 'call rejection follow-up failed');
+    // Retry the whole sequence up to 2 times — the WhatsApp socket can be in a
+    // brief post-call unsettled state where the first send times out but a
+    // second attempt a moment later succeeds.
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await runMessageSequence(sequence!, {
+          accountId: c.accountId,
+          contactId: contact.id,
+          jid: c.from,
+          ctx: {
+            contact: { name: contact.name, jid: contact.jid },
+            bot: { name: bot?.name ?? '' },
+            account: { name: account.name },
+          },
+          provider,
+          senderType: 'bot',
+        });
+        // Mark the dedup timestamp ONLY after a successful send — so repeat
+        // callers get the configured message exactly ONCE per 24h, and a
+        // failed attempt still allows a retry on the next call.
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { lastCallRejectionMessageAt: new Date() } as any,
+        }).catch(() => {});
+        logger.info({ accountId: c.accountId, contactId: contact.id, attempt },
+                    'call-rejection: configured message sent');
+        return;
+      } catch (e) {
+        lastErr = e;
+        logger.warn({ err: e, accountId: c.accountId, from: c.from, attempt },
+                    'call-rejection: send attempt failed');
+        if (attempt < 2) await sleep(1500);
+      }
     }
+    // Both attempts failed — persist a VISIBLE failed row so the operator can
+    // see in the inbox that the call was rejected but the message didn't send
+    // (almost always the WhatsApp Web connection dropping at call time).
+    logger.error({ err: lastErr, accountId: c.accountId, from: c.from },
+                 'call rejection follow-up failed after retries');
+    await prisma.message.create({
+      data: {
+        accountId: c.accountId, contactId: contact.id,
+        direction: 'out', type: 'text',
+        body: '⚠️ تعذّر إرسال رسالة رفض المكالمة (انقطاع اتصال واتساب لحظة المكالمة)',
+        clientMessageId: `callrej_fail_${Date.now()}`,
+        status: 'failed', error: String((lastErr as Error)?.message ?? lastErr).slice(0, 200),
+        senderType: 'bot',
+      },
+    }).catch(() => {});
   }, {
     minDelayMs: settings.min_send_delay_ms,
     maxDelayMs: settings.max_send_delay_ms,
