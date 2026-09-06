@@ -195,8 +195,17 @@ export async function aiHandleIncoming(c: AiHandleContext): Promise<boolean> {
   // bodies (see CANNED_FALLBACK_BODIES) — otherwise the LLM's own past
   // "please rephrase" messages become part of its persona and feed a
   // silent-response loop.
+  // Product-change isolation: when the operator switched the product, the
+  // bot's OWN past replies described the OLD product — feeding them back would
+  // make gpt-4o keep selling the old item. Only include turns created AFTER
+  // the last systemPrompt change so the new facts win cleanly (see
+  // promptUpdatedAt, stamped by PATCH /bots/:id/ai).
+  const promptChangedAt = (cfg as any).promptUpdatedAt as Date | null | undefined;
   const historyRaw = await prisma.message.findMany({
-    where: { contactId: c.contactId },
+    where: {
+      contactId: c.contactId,
+      ...(promptChangedAt ? { createdAt: { gte: promptChangedAt } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
     take: Math.max(1, Math.min(100, (cfg.historyTurns ?? DEFAULT_HISTORY_TURNS) * 2)),
     select: { direction: true, body: true, type: true, senderType: true },

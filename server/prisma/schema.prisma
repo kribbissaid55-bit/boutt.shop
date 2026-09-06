@@ -206,6 +206,12 @@ model BotAiConfig {
   // removes the clone. NULL for bots that never cloned — prompt block is
   // omitted entirely in that case.
   voiceClonedPersona       String?
+  // Timestamp of the last product/instructions change (systemPrompt edit).
+  // The AI engine only feeds the LLM conversation history created AFTER this
+  // moment, so when the operator switches the product the bot immediately
+  // drops the old product's talk and commits to the new facts — even for
+  // existing contacts. NULL = never changed → full history window is used.
+  promptUpdatedAt          DateTime?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
   bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)

@@ -118,6 +118,19 @@ aiRouter.patch('/bots/:id/ai', async (req, res, next) => {
     if (data.customerTagsConfig !== undefined) {
       patch.customerTagsConfig = data.customerTagsConfig === null ? null : JSON.stringify(data.customerTagsConfig);
     }
+    // Product-change detection: when the operator edits the system prompt
+    // (where the product identity/price/facts live), stamp promptUpdatedAt so
+    // the engine drops pre-change conversation history and the bot commits to
+    // the NEW product instead of echoing the old one from past turns.
+    if (data.systemPrompt !== undefined) {
+      const existing = await prisma.botAiConfig.findUnique({
+        where: { botId: req.params.id },
+        select: { systemPrompt: true },
+      });
+      if (!existing || (existing.systemPrompt ?? '') !== (data.systemPrompt ?? '')) {
+        patch.promptUpdatedAt = new Date();
+      }
+    }
     const updated = await prisma.botAiConfig.upsert({
       where: { botId: req.params.id },
       update: patch,

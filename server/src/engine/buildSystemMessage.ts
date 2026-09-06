@@ -139,6 +139,11 @@ export function buildLayeredSystemMessage(input: {
     // operator's own systemPrompt (highest priority) can still countermand.
     voicePersonaBlock,
     operatorOverride,
+    // Authoritative-facts guard: the operator's systemPrompt above is the ONLY
+    // valid source of product identity, price, and details. If anything earlier
+    // in the conversation names a different product/price, treat it as outdated
+    // and ignore it — the operator may have switched the product.
+    `⚠️ معلومات المنتج والسعر والتفاصيل أعلاه هي الوحيدة الصحيحة والحالية. إذا ظهر في المحادثة السابقة منتج أو ثمن مختلف، فهو قديم — تجاهله تماماً واعتمد فقط المعلومات الحالية أعلاه.`,
     `أجب بصيغة JSON صارمة بدون شرح خارجي:`,
     // The `mode` field is intentionally NOT in this envelope. The reply mode
     // (text vs voice) is decided server-side from the operator's pin or the
